@@ -2,6 +2,7 @@
 import 'package:dyme_eat/models/pathfinder_tip.dart';
 import 'package:dyme_eat/models/restaurant.dart';
 import 'package:dyme_eat/models/story.dart';
+import 'package:dyme_eat/models/review.dart'; // <-- Add this import
 import 'package:dyme_eat/screens/restaurant/add_story_screen.dart';
 import 'package:dyme_eat/screens/restaurant/add_tip_screen.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -172,7 +173,7 @@ class RestaurantDetailScreen extends ConsumerWidget {
             RadarDataSet(
               dataEntries: dataValues.map((value) => RadarEntry(value: value)).toList(),
               borderColor: Theme.of(context).colorScheme.primary,
-              fillColor: Theme.of(context).colorScheme.primary.withOpacity(0.4),
+              fillColor: Theme.of(context).colorScheme.primary.withAlpha(100),
             ),
           ],
           radarBackgroundColor: Colors.transparent,
@@ -184,7 +185,7 @@ class RestaurantDetailScreen extends ConsumerWidget {
               return RadarChartTitle(text: tasteKeys[index], angle: angle);
           },
           tickCount: 5,
-          maxLimit: 5,
+         
         ),
       ),
     );
