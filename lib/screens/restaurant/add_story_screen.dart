@@ -20,10 +20,15 @@ class _AddStoryScreenState extends ConsumerState<AddStoryScreen> {
   bool _isLoading = false;
 
   Future<void> _submitStory() async {
+    // It's good practice to read from the ref before an async gap
     final user = ref.read(authServiceProvider).currentUser;
+    
     if (user == null || _titleController.text.isEmpty || _contentController.text.isEmpty) {
+      // This is synchronous, but checking `mounted` is still a good habit for robustness.
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Title and content cannot be empty.')));
-        return;
+      }
+      return;
     }
 
     setState(() => _isLoading = true);
@@ -40,14 +45,25 @@ class _AddStoryScreenState extends ConsumerState<AddStoryScreen> {
 
     try {
       await FirebaseFirestore.instance.collection('stories').add(newStory.toFirestore());
+      
+      // FIX: Guard against using BuildContext across async gaps.
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Story submitted for approval. Thank you!')),
       );
       Navigator.pop(context);
+
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('An error occurred: $e')));
+      // FIX: Guard against using BuildContext across async gaps.
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('An error occurred: $e')),
+      );
     } finally {
-      if(mounted) setState(() => _isLoading = false);
+      // The `mounted` check here is also crucial.
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
