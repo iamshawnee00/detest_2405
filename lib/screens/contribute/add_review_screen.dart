@@ -25,8 +25,11 @@ class _AddReviewScreenState extends ConsumerState<AddReviewScreen> {
   bool _isLoading = false;
 
   Future<void> _submitReview() async {
+    // Read the user from the provider before the async gap.
     final user = ref.read(authServiceProvider).currentUser;
     if (user == null) {
+      // Check if the widget is still in the tree before using its context.
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('You must be logged in to submit a review.')),
       );
@@ -45,16 +48,23 @@ class _AddReviewScreenState extends ConsumerState<AddReviewScreen> {
     try {
       await FirebaseFirestore.instance.collection('reviews').add(newReview.toFirestore());
       
+      // Guard against using BuildContext across async gaps.
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Review submitted! +25 IP awarded!')),
       );
       Navigator.pop(context);
 
     } catch (e) {
-      setState(() => _isLoading = false);
+      // Guard against using BuildContext across async gaps.
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Submission failed: $e')),
       );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -76,16 +86,18 @@ class _AddReviewScreenState extends ConsumerState<AddReviewScreen> {
                 const SizedBox(height: 8),
                 const Text('Rate the distinct flavors of your experience.'),
                 const SizedBox(height: 24),
+                // Removed the unnecessary .toList() call.
                 ..._tasteDialData.keys.map((tasteName) {
                   return _buildSlider(tasteName);
-                }).toList(),
+                }),
                 const SizedBox(height: 32),
                 ElevatedButton(
                   onPressed: _submitReview,
-                  child: const Text('Submit Taste Profile'),
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
+                  // Moved the child argument to the end.
+                  child: const Text('Submit Taste Profile'),
                 )
               ],
             ),
@@ -119,3 +131,4 @@ class _AddReviewScreenState extends ConsumerState<AddReviewScreen> {
     );
   }
 }
+
