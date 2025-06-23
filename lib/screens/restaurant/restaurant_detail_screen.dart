@@ -1,9 +1,10 @@
 // lib/screens/restaurant/restaurant_detail_screen.dart
 import 'package:dyme_eat/models/pathfinder_tip.dart';
 import 'package:dyme_eat/models/restaurant.dart';
-import 'package:dyme_eat/models/review.dart'; // << IMPORT REVIEW
+import 'package:dyme_eat/models/story.dart';
+import 'package:dyme_eat/screens/restaurant/add_story_screen.dart';
 import 'package:dyme_eat/screens/restaurant/add_tip_screen.dart';
-import 'package:fl_chart/fl_chart.dart'; // << IMPORT FL_CHART
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -26,6 +27,26 @@ final reviewsStreamProvider = StreamProvider.autoDispose.family<List<Review>, St
     .map((snapshot) => snapshot.docs.map((doc) => Review.fromFirestore(doc.data())).toList());
 });
 
+// << NEW PROVIDER FOR STORIES >>
+final storiesStreamProvider = StreamProvider.autoDispose.family<List<Story>, String>((ref, restaurantId) {
+  return FirebaseFirestore.instance
+      .collection('stories')
+      .where('restaurantId', isEqualTo: restaurantId)
+      .where('status', isEqualTo: 'approved') // Only show approved stories
+      .orderBy('createdAt', descending: true)
+      .snapshots()
+      .map((snapshot) => snapshot.docs.map((doc) => Story.fromFirestore(doc)).toList());
+});
+
+// << NEW PROVIDER FOR REAL-TIME RESTAURANT UPDATES >>
+final restaurantStreamProvider = StreamProvider.autoDispose.family<Restaurant, String>((ref, restaurantId) {
+  return FirebaseFirestore.instance
+      .collection('restaurants')
+      .doc(restaurantId)
+      .snapshots()
+      .map((doc) => Restaurant.fromFirestore(doc));
+});
+
 class RestaurantDetailScreen extends ConsumerWidget {
   final Restaurant restaurant;
   const RestaurantDetailScreen({super.key, required this.restaurant});
@@ -33,7 +54,8 @@ class RestaurantDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tipsAsync = ref.watch(tipsStreamProvider(restaurant.id));
-    final reviewsAsync = ref.watch(reviewsStreamProvider(restaurant.id)); // << WATCH REVIEWS
+    final restaurantAsync = ref.watch(restaurantStreamProvider(restaurant.id)); // << CORRECTED
+    final storiesAsync = ref.watch(storiesStreamProvider(restaurant.id)); // << WATCH STORIES
 
     return Scaffold(
       appBar: AppBar(title: Text(restaurant.name)),
@@ -44,8 +66,8 @@ class RestaurantDetailScreen extends ConsumerWidget {
           Card(
             child: SizedBox(
               height: 250, //Give the chart some space
-              child: reviewsAsync.when(
-                data: (reviews) => _buildTasteSignatureChart(context, reviews),
+              child: restaurantAsync.when(
+                data: (updatedRestaurant) => _buildTasteSignatureChart(context, updatedRestaurant.overallTasteSignature),
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (_, __) => const Center(child: Text("Can't load taste data")),
               ),
@@ -86,35 +108,61 @@ class RestaurantDetailScreen extends ConsumerWidget {
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (err, stack) => const Center(child: Text("Could not load tips.")),
           ),
+
+          // << NEW STORIES & RITUALS SECTION >>
+          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text("Stories & Rituals", style: Theme.of(context).textTheme.headlineSmall),
+              IconButton(
+                icon: const Icon(Icons.history_edu_outlined),
+                tooltip: "Share a Story",
+                onPressed: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => AddStoryScreen(restaurantId: restaurant.id)));
+                },
+              ),
+            ],
+          ),
+          const Divider(),
+          storiesAsync.when(
+            data: (stories) {
+              if (stories.isEmpty) {
+                return const Center(child: Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text("Be the first to share a story or ritual!"),
+                ));
+              }
+              return Column(
+                children: stories.map((story) => Card(
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  child: ListTile(
+                    title: Text(story.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(story.content, maxLines: 3, overflow: TextOverflow.ellipsis),
+                    isThreeLine: true,
+                  ),
+                )).toList(),
+              );
+            },
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (err, stack) => const Center(child: Text("Could not load stories.")),
+          ),
         ],
       ),
     );
   }
 
-  // << NEW WIDGET FOR THE RADAR CHART >>
-  Widget _buildTasteSignatureChart(BuildContext context, List<Review> reviews) {
-    if (reviews.isEmpty) {
+  // << WIDGET IS NOW SIMPLER AND CORRECT >>
+  Widget _buildTasteSignatureChart(BuildContext context, Map<String, dynamic> signatureData) {
+    final mutableSignature = Map<String, dynamic>.from(signatureData);
+    mutableSignature.removeWhere((key, value) => key == '_reviewCount');
+    
+    if (mutableSignature.isEmpty) {
       return const Center(child: Text("No reviews yet. Be the first!"));
     }
 
-    // --- Calculate Average Taste Data (Client-Side) ---
-    final Map<String, double> aggregatedData = {};
-    final Map<String, int> counts = {};
-
-    for (var review in reviews) {
-      review.tasteDialData.forEach((key, value) {
-        aggregatedData[key] = (aggregatedData[key] ?? 0) + value;
-        counts[key] = (counts[key] ?? 0) + 1;
-      });
-    }
-
-    final tasteKeys = aggregatedData.keys.toList();
-    final avgData = aggregatedData.map((key, value) => MapEntry(key, value / counts[key]!));
-    
-    // Ensure we have data to display
-    if (tasteKeys.isEmpty) {
-        return const Center(child: Text("No taste data recorded yet."));
-    }
+    final tasteKeys = mutableSignature.keys.toList();
+    final dataValues = tasteKeys.map((key) => mutableSignature[key] as double).toList();
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
@@ -122,7 +170,7 @@ class RestaurantDetailScreen extends ConsumerWidget {
         RadarChartData(
           dataSets: [
             RadarDataSet(
-              dataEntries: avgData.values.map((value) => RadarEntry(value: value)).toList(),
+              dataEntries: dataValues.map((value) => RadarEntry(value: value)).toList(),
               borderColor: Theme.of(context).colorScheme.primary,
               fillColor: Theme.of(context).colorScheme.primary.withOpacity(0.4),
             ),
@@ -133,16 +181,12 @@ class RestaurantDetailScreen extends ConsumerWidget {
           tickBorderData: const BorderSide(color: Colors.grey, width: 1),
           ticksTextStyle: const TextStyle(color: Colors.transparent, fontSize: 10),
           getTitle: (index, angle) {
-              return RadarChartTitle(
-                text: tasteKeys[index],
-                angle: angle,
-              );
+              return RadarChartTitle(text: tasteKeys[index], angle: angle);
           },
-          tickCount: 5, // Represents the 0-5 scale
-          maxLimit: 5, // Explicitly set the max limit of the scale
+          tickCount: 5,
+          maxLimit: 5,
         ),
       ),
     );
   }
-
 }
