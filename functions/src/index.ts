@@ -489,3 +489,122 @@ export const onStoryCreated = functions.firestore
         console.log("Awaiting admin approval for IP reward.");
         return null;
     });
+
+
+/**
+ * ==========================================================================================
+ * WALLET INTEGRATION (PKPASS) FUNCTIONS (CORRECTED)
+ * ==========================================================================================
+ */
+
+/**
+ * Prepares the data payload required to generate a .pkpass file for Apple Wallet.
+ *
+ * NOTE: This function *prepares* the data. A separate, dedicated service with access
+ * to Apple's signing certificates is required to perform the actual .pkpass
+ * file creation and signing. This function returns the JSON that service would need.
+ *
+ * @returns {object} An object containing the pass data and a placeholder URL.
+ */
+export const generatePkpassData = functions.https.onCall(async (data, context) => {
+    const uid = context.auth?.uid;
+
+    if (!uid) {
+        throw new functions.https.HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (!userDoc.exists) {
+        throw new functions.https.HttpsError("not-found", "User data not found.");
+    }
+    const userData = userDoc.data()!;
+
+    // --- (FIXED) Analyze reviews to find top flavors and restaurants ---
+    const reviewsSnapshot = await db.collection("reviews").where("authorId", "==", uid).get();
+    
+    // Find Top 3 Flavors by frequency of rating
+    const flavorCounts: { [key: string]: number } = {};
+    reviewsSnapshot.forEach((doc) => {
+        const review = doc.data();
+        if (review.tasteDialData) {
+            Object.keys(review.tasteDialData).forEach((key) => {
+                flavorCounts[key] = (flavorCounts[key] || 0) + 1;
+            });
+        }
+    });
+    const topFlavors = Object.entries(flavorCounts)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3)
+        .map(([key]) => key);
+
+
+    // This data structure mirrors the fields you would define in a pass.json file.
+    const passJson = {
+        formatVersion: 1,
+        passTypeIdentifier: "pass.com.dyme.eat.foodie-card", // Your Pass Type ID from Apple
+        serialNumber: `DYME-${uid.substring(0, 10)}`,
+        teamIdentifier: "YOUR_TEAM_ID", // Your Apple Developer Team ID
+        organizationName: "Dyme Eat",
+        description: "Dyme Eat Foodie Card",
+        logoText: "Dyme Eat",
+        foregroundColor: "rgb(255, 255, 255)",
+        backgroundColor: "rgb(30, 30, 30)",
+        labelColor: "rgb(180, 180, 180)",
+        storeCard: {
+            primaryFields: [
+                {
+                    key: "name",
+                    label: "FOODIE",
+                    value: userData.displayName || "N/A",
+                },
+            ],
+            secondaryFields: [
+                {
+                    key: "crest",
+                    label: "FOODIE CREST",
+                    value: userData.foodiePersonality || "Not Revealed",
+                },
+            ],
+            auxiliaryFields: [
+                {
+                    key: "ip",
+                    label: "INFLUENCE",
+                    value: `${userData.influencePoints || 0} IP`,
+                },
+            ],
+            backFields: [
+                {
+                    key: "userId",
+                    label: "User ID",
+                    value: uid,
+                },
+                // (FIXED) Added Top Flavors to the back of the pass
+                {
+                    key: "topFlavors",
+                    label: "TOP FLAVORS",
+                    value: topFlavors.join(", ") || "Not yet rated",
+                },
+                {
+                    key: "info",
+                    label: "About",
+                    value: "This card represents your unique taste profile in the Dyme Eat ecosystem. Share it to connect with other foodies!",
+                },
+            ],
+        },
+        barcode: {
+            message: JSON.stringify({ userId: uid }),
+            format: "PKBarcodeFormatQR",
+            messageEncoding: "iso-8859-1",
+        },
+    };
+
+    // In a real implementation, you would send this `passJson` to your signing service.
+    // Here, we return a success message and a placeholder for the download URL.
+    return {
+        success: true,
+        message: "Pass data generated successfully.",
+        // This URL would point to your signing service which returns the .pkpass file.
+        downloadUrl: `https://your-pkpass-service.com/generate?data=${encodeURIComponent(JSON.stringify(passJson))}`,
+    };
+});
+
