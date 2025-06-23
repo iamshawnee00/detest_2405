@@ -1,10 +1,15 @@
 /**
- * Dyme Eat: The Legacy Engine - Cloud Functions
+ * Dyme Eat: The Legacy Engine - Cloud Functions (v2 SDK)
  *
  * This file contains the backend logic for aggregating reviews, awarding Influence Points (IP),
- * and managing other server-side tasks for the application.
+ * and managing other server-side tasks for the application, updated to use the Firebase Functions v2 SDK.
  */
-import * as functions from "firebase-functions";
+
+// v2 Imports
+import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import * as logger from "firebase-functions/logger";
+
 import * as admin from "firebase-admin";
 
 admin.initializeApp();
@@ -17,39 +22,40 @@ const db = admin.firestore();
  */
 
 /**
- * Triggered whenever a new review is written. It performs two main actions:
+ * Triggered whenever a new review is written. It performs three main actions:
  * 1. Awards +25 IP to the author of the review.
  * 2. Triggers the aggregation of taste data for the associated restaurant.
+ * 3. Checks if the user has met the criteria for the Revelation Event.
  */
-export const onReviewCreated = functions.firestore
-  .document("reviews/{reviewId}")
-  .onCreate(async (snap) => {
-    const reviewData = snap.data();
-    if (!reviewData) {
-      console.error("No data associated with the review.");
-      return;
+
+export const onreviewcreated = onDocumentCreated("reviews/{reviewId}", async (event) => {
+    const snap = event.data;
+    if (!snap) {
+        logger.error("No data associated with the review event.");
+        return;
     }
+    const reviewData = snap.data();
 
     const { authorId, restaurantId } = reviewData;
 
     if (!authorId || !restaurantId) {
-      console.error("Review is missing authorId or restaurantId.");
-      return;
+        logger.error("Review is missing authorId or restaurantId.");
+        return;
     }
 
-    // --- 1. Award Influence Points (IP) ---
+    // --- 1. Award Influence Points (IP) for the review ---
     const userRef = db.collection("users").doc(authorId);
     await userRef.update({
       influencePoints: admin.firestore.FieldValue.increment(25),
     });
-    console.log(`Awarded +25 IP to user ${authorId} for new review.`);
+    logger.log(`Awarded +25 IP to user ${authorId} for new review.`);
 
     // --- 2. Recalculate and update the restaurant's Taste Signature ---
     await recalculateTasteSignature(restaurantId);
 
     // --- 3. Check for Foodie Personality Revelation Event ---
     await checkForRevelationEvent(authorId);
-  });
+});
 
 /**
  * Recalculates the `overallTasteSignature` for a given restaurant.
@@ -126,48 +132,37 @@ async function recalculateTasteSignature(restaurantId: string) {
  * Triggered when a pathfinderTip document is updated (e.g., upvoted).
  * Checks if a tip has reached the verification threshold and awards IP if it has.
  */
-export const onPathfinderTipUpdate = functions.firestore
-  .document("pathfinderTips/{tipId}")
-  .onUpdate(async (change) => {
-    const newData = change.after.data();
-    const oldData = change.before.data();
-
-    // Only proceed if the upvotes have changed and the tip is not yet verified
+export const onpathfindertipupdate = onDocumentUpdated("pathfinderTips/{tipId}", async (event) => {
+    const snap = event.data;
+    if (!snap) {
+        logger.error("No data associated with the tip update event.");
+        return;
+    }
+    const newData = snap.after.data();
+    const oldData = snap.before.data();
+    
     if (newData.upvotes === oldData.upvotes || newData.isVerified) {
-      return null;
+        return;
     }
 
-    const VERIFICATION_THRESHOLD = 3; // Tip is verified after 3 upvotes
+    const VERIFICATION_THRESHOLD = 3;
 
-    // Check if the tip now meets the verification threshold
     if (newData.upvotes >= VERIFICATION_THRESHOLD) {
-      const tipId = change.after.id;
-      const authorId = newData.authorId;
-
-      if (!authorId) {
-        console.error(`Tip ${tipId} has no authorId.`);
-        return null;
-      }
-
-      // Use a transaction to ensure atomicity
-      return db.runTransaction(async (transaction) => {
+        const tipId = snap.after.id;
+        const authorId = newData.authorId;
+        if (!authorId) {
+            logger.error(`Tip ${tipId} has no authorId.`);
+            return;
+        }
         const tipRef = db.collection("pathfinderTips").doc(tipId);
+        await tipRef.update({ isVerified: true });
         const userRef = db.collection("users").doc(authorId);
-
-        // 1. Mark the tip as verified
-        transaction.update(tipRef, { isVerified: true });
-
-        // 2. Award +15 IP to the author
-        transaction.update(userRef, {
-          influencePoints: admin.firestore.FieldValue.increment(15),
+        await userRef.update({
+            influencePoints: admin.firestore.FieldValue.increment(15),
         });
-        
-        console.log(`Tip ${tipId} verified. Awarded +15 IP to user ${authorId}.`);
-      });
+        logger.log(`Tip ${tipId} verified. Awarded +15 IP to user ${authorId}.`);
     }
-
-    return null;
-  });
+});
 
 
 /**
@@ -286,6 +281,7 @@ function getVariance(numbers: number[]): number {
   const mean = numbers.reduce((a, b) => a + b, 0) / numbers.length;
   const squareDiffs = numbers.map((value) => (value - mean) ** 2);
   return squareDiffs.reduce((a, b) => a + b, 0) / numbers.length;
+  return 0;
 }  
 
 
@@ -300,13 +296,15 @@ function getVariance(numbers: number[]): number {
  * This function currently serves as a placeholder for logging. The IP award
  * will happen when an admin approves the submission.
  */
-export const onRestaurantSuggestionCreated = functions.firestore
-    .document("submittedRestaurants/{submissionId}")
-    .onCreate((snap) => {
-        const submissionData = snap.data();
-        console.log("New restaurant suggestion received:", submissionData.name);
-        console.log("Awaiting admin approval.");
-        return null;
+export const onRestaurantSuggestionCreated = onDocumentCreated("submittedRestaurants/{submissionId}", (event) => {
+    const snap = event.data;
+    if (!snap) {
+        logger.error("No data associated with the restaurant suggestion event.");
+        return;
+    }
+    const submissionData = snap.data();
+    logger.log("New restaurant suggestion received:", submissionData.name);
+    logger.log("Awaiting admin approval.");
     });
 
 /**
