@@ -35,6 +35,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _completeOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('onboardingComplete', true);
+
+    // Guard against using BuildContext across async gaps.
+    // This checks if the widget is still in the widget tree before navigating.
+    if (!mounted) return;
+
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const Shell()),
     );
@@ -49,12 +54,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             Expanded(
               child: PageView(
                 controller: _pageController,
-                children: _pages,
                 onPageChanged: (page) {
                   setState(() {
                     _currentPage = page;
                   });
                 },
+                children: _pages,
               ),
             ),
             Padding(
