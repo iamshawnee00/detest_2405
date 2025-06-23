@@ -1,15 +1,5 @@
-buildscript {
-    ext.kotlin_version = '1.9.22' // It's also a good idea to update Kotlin
-    repositories {
-        google()
-        mavenCentral()
-    }
-
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.1' // <-- UPDATED
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-    }
-}
+// This file is now much simpler.
+// The buildscript block has been removed because versions are now in settings.gradle.
 
 allprojects {
     repositories {
