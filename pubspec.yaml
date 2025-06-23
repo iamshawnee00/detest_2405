@@ -49,6 +49,7 @@ dependencies:
   google_maps_flutter: ^2.12.3
 
   timeago: ^3.6.1 # For relative time formatting
+  fl_chart: ^0.66.2 # For charts and graphs
 
 
 dev_dependencies:

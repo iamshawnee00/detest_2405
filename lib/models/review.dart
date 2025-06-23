@@ -16,6 +16,17 @@ class Review {
     required this.tasteDialData,
   });
 
+  // << ADD THIS FACTORY CONSTRUCTOR >>
+  factory Review.fromFirestore(Map<String, dynamic> data) {
+    return Review(
+      authorId: data['authorId'] ?? '',
+      restaurantId: data['restaurantId'] ?? '',
+      dishId: data['dishId'],
+      timestamp: data['timestamp'] ?? Timestamp.now(),
+      tasteDialData: Map<String, double>.from(data['tasteDialData'] ?? {}),
+    );
+  }
+
   Map<String, dynamic> toFirestore() {
     return {
       'authorId': authorId,

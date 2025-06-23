@@ -34,7 +34,8 @@ class DiscoverScreen extends ConsumerWidget {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => RestaurantDetailScreen(restaurant: restaurant),
+                      builder: (context) =>
+                          RestaurantDetailScreen(restaurant: restaurant),
                     ),
                   );
                 },
