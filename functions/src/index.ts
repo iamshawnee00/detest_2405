@@ -312,45 +312,33 @@ export const onRestaurantSuggestionCreated = onDocumentCreated("submittedRestaur
  * If an admin changes the status to 'approved', this function moves the data
  * to the public 'restaurants' collection and awards +100 IP to the submitter.
  */
-export const onRestaurantSuggestionUpdate = functions.firestore
-    .document("submittedRestaurants/{submissionId}")
-    .onUpdate(async (change) => {
-        const newData = change.after.data();
-        const oldData = change.before.data();
+export const onRestaurantSuggestionUpdate = onDocumentUpdated("submittedRestaurants/{submissionId}", async (event) => {
+    const snap = event.data;
+    if (!snap) {
+        logger.error("No data for onrestaurantsuggestionupdate");
+        return;
+    }
+    const newData = snap.after.data();
+    const oldData = snap.before.data();
 
-        // Check if the status has changed to 'approved'
-        if (newData.status === "approved" && oldData.status !== "approved") {
-            const { name, address, location, city, state, submittedBy, cuisineTags } = newData;
-            
-            if (!submittedBy) {
-                console.error("Approved submission is missing a 'submittedBy' UID.");
-                return null;
-            }
-
-            // 1. Create a new document in the public 'restaurants' collection
-            await db.collection("restaurants").add({
-                name,
-                address,
-                location, // This is already a GeoPoint
-                city: city || "",
-                state: state || "",
-                cuisineTags: cuisineTags || [],
-                overallTasteSignature: {}, // Initialize with empty signature
-                createdBy: submittedBy,
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-
-            // 2. Award +100 IP to the user who submitted it
-            const userRef = db.collection("users").doc(submittedBy);
-            await userRef.update({
-                influencePoints: admin.firestore.FieldValue.increment(100),
-            });
-            
-            console.log(`Approved restaurant '${name}'. Awarded +100 IP to user ${submittedBy}.`);
+    if (newData.status === "approved" && oldData.status !== "approved") {
+        const { name, address, location, city, state, submittedBy, cuisineTags } = newData;
+        if (!submittedBy) {
+            logger.error("Approved submission is missing a 'submittedBy' UID.");
+            return;
         }
-        
-        return null;
-    });
+        await db.collection("restaurants").add({
+            name, address, location, city: city || "", state: state || "",
+            cuisineTags: cuisineTags || [], overallTasteSignature: {},
+            createdBy: submittedBy, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        const userRef = db.collection("users").doc(submittedBy);
+        await userRef.update({
+            influencePoints: admin.firestore.FieldValue.increment(100),
+        });
+        logger.log(`Approved restaurant '${name}'. Awarded +100 IP to user ${submittedBy}.`);
+    }
+});
 
 
 /**
@@ -363,37 +351,25 @@ export const onRestaurantSuggestionUpdate = functions.firestore
  * A callable function that allows a user to create a new group.
  * It ensures the user is authenticated and adds them as the first member and creator.
  */
-export const createGroup = functions.https.onCall(async (data, context) => {
-    const uid = context.auth?.uid;
-    const groupName = data.name;
+export const creategroup = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    const groupName = request.data.name;
 
     if (!uid) {
-        throw new functions.https.HttpsError(
-            "unauthenticated",
-            "You must be logged in to create a group."
-        );
+        throw new HttpsError("unauthenticated", "You must be logged in to create a group.");
     }
-
     if (!groupName || typeof groupName !== "string" || groupName.length > 50) {
-        throw new functions.https.HttpsError(
-            "invalid-argument",
-            "Group name must be a string up to 50 characters."
-        );
+        throw new HttpsError("invalid-argument", "Group name must be a string up to 50 characters.");
     }
 
     const groupRef = db.collection("groups").doc();
-
     await groupRef.set({
-        name: groupName,
-        createdBy: uid,
+        name: groupName, createdBy: uid,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        members: [uid], // Add the creator as the first member
-        tasteSignature: {},
-        allergies: {},
+        members: [uid], tasteSignature: {}, allergies: {},
     });
-
     return { groupId: groupRef.id };
-});    
+});
 
 
 /**
@@ -406,14 +382,11 @@ export const createGroup = functions.https.onCall(async (data, context) => {
  * A callable function that generates the data payload for a user's Foodie Card.
  * This data can be used to generate a QR code on the client.
  */
-export const generateFoodieCardData = functions.https.onCall(async (data, context) => {
-    const uid = context.auth?.uid;
+export const generateFoodieCardData = onCall(async (request) => {
+    const uid = request.auth?.uid;
 
     if (!uid) {
-        throw new functions.https.HttpsError(
-            "unauthenticated",
-            "You must be logged in to generate a Foodie Card."
-        );
+        throw new HttpsError("unauthenticated", "You must be logged in.");
     }
 
     const userDoc = await db.collection("users").doc(uid).get();
@@ -465,6 +438,65 @@ export const generateFoodieCardData = functions.https.onCall(async (data, contex
 
     // The client will stringify this JSON for the QR code
     return cardData;
+    return {};
+});
+
+export const generatepkpassdata = onCall(async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+        throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (!userDoc.exists) {
+        throw new HttpsError("not-found", "User data not found.");
+    }
+    const userData = userDoc.data()!;
+    const reviewsSnapshot = await db.collection("reviews").where("authorId", "==", uid).get();
+    const flavorCounts: { [key: string]: number } = {};
+    reviewsSnapshot.forEach((doc) => {
+        const review = doc.data();
+        if (review.tasteDialData) {
+            Object.keys(review.tasteDialData).forEach((key) => {
+                flavorCounts[key] = (flavorCounts[key] || 0) + 1;
+            });
+        }
+    });
+    const topFlavors = Object.entries(flavorCounts)
+        .sort(([, a], [, b]) => b - a).slice(0, 3).map(([key]) => key);
+
+    const passJson = {
+        formatVersion: 1,
+        passTypeIdentifier: "pass.com.dyme.eat.foodie-card",
+        serialNumber: `DYME-${uid.substring(0, 10)}`,
+        teamIdentifier: "YOUR_TEAM_ID",
+        organizationName: "Dyme Eat",
+        description: "Dyme Eat Foodie Card",
+        logoText: "Dyme Eat",
+        foregroundColor: "rgb(255, 255, 255)",
+        backgroundColor: "rgb(30, 30, 30)",
+        labelColor: "rgb(180, 180, 180)",
+        storeCard: {
+            primaryFields: [{ key: "name", label: "FOODIE", value: userData.displayName || "N/A" }],
+            secondaryFields: [{ key: "crest", label: "FOODIE CREST", value: userData.foodiePersonality || "Not Revealed" }],
+            auxiliaryFields: [{ key: "ip", label: "INFLUENCE", value: `${userData.influencePoints || 0} IP` }],
+            backFields: [
+                { key: "userId", label: "User ID", value: uid },
+                { key: "topFlavors", label: "TOP FLAVORS", value: topFlavors.join(", ") || "Not yet rated" },
+                { key: "info", label: "About", value: "This card represents your unique taste profile..." },
+            ],
+        },
+        barcode: {
+            message: JSON.stringify({ userId: uid }),
+            format: "PKBarcodeFormatQR",
+            messageEncoding: "iso-8859-1",
+        },
+    };
+
+    return {
+        success: true,
+        message: "Pass data generated successfully.",
+        downloadUrl: `https://your-pkpass-service.com/generate?data=${encodeURIComponent(JSON.stringify(passJson))}`,
+    };
 });
 
 
@@ -479,14 +511,16 @@ export const generateFoodieCardData = functions.https.onCall(async (data, contex
  * This is a high-value contribution that requires manual admin approval.
  * The IP reward (+100 to +500) will be granted by an admin.
  */
-export const onStoryCreated = functions.firestore
-    .document("stories/{storyId}")
-    .onCreate((snap) => {
-        const storyData = snap.data();
-        console.log(`New story/ritual submitted for restaurant ${storyData.restaurantId} by user ${storyData.authorId}.`);
-        console.log("Awaiting admin approval for IP reward.");
-        return null;
-    });
+export const onstorycreated = onDocumentCreated("stories/{storyId}", (event) => {
+    const snap = event.data;
+    if (!snap) {
+        logger.error("No data for onstorycreated");
+        return;
+    }
+    const storyData = snap.data();
+    logger.log(`New story/ritual submitted for restaurant ${storyData.restaurantId} by user ${storyData.authorId}.`);
+    logger.log("Awaiting admin approval for IP reward.");
+});
 
 
 /**
