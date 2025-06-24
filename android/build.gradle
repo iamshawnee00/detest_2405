@@ -1,5 +1,18 @@
-// This file is now much simpler.
-// The buildscript block has been removed because versions are now in settings.gradle.
+buildscript {
+    ext.kotlin_version = '1.9.22' // Defines the Kotlin version for the project
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        // Defines the versions of the essential build tools
+        classpath 'com.android.tools.build:gradle:8.2.1'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        // Add the google-services plugin classpath
+        classpath 'com.google.gms:google-services:4.4.1'
+    }
+}
 
 allprojects {
     repositories {
